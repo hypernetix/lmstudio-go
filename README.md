@@ -12,6 +12,11 @@ LM Studio is a great tool for interacting with LLMs and it has REST API for chat
 - Server management (start, stop, etc)
 
 
+## Release Notes
+
+This is work in progress
+
+
 ## License
 
 [Apache License 2.0](LICENSE.md)
