@@ -1,6 +1,12 @@
 # LM Studio Go
 
-A Go library and CLI for interacting with [LM Studio](https://lmstudio.ai/), inspired by [lmstudio-python](https://github.com/lmstudio-ai/lmstudio-client-python).
+[![Go Report Card](https://goreportcard.com/badge/github.com/hypernetix/lmstudio-go)](https://goreportcard.com/report/github.com/hypernetix/lmstudio-go)
+[![License: Apache2.0](https://img.shields.io/badge/License-apache2-yellow.svg)](https://opensource.org/licenses/apache-2-0)
+
+**LM Studio Go** is an open-source Go SDK and CLI for managing and interacting with Large Language Models (LLMs) via [LM Studio](https://lmstudio.ai)'s WebSocket API.  
+Easily load, manage, and chat with LLMs in your Go applications or from the command line.
+
+> Inspired by [lmstudio-python](https://github.com/lmstudio-ai/lmstudio-python).
 
 
 ## Motivation

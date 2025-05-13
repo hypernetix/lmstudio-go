@@ -103,7 +103,7 @@ func TestNamespaceConnectionRemoteCall(t *testing.T) {
 
 	// Test with unloadModel which is also supported by the mock
 	params := map[string]interface{}{"identifier": "mock-model-0.5B"}
-	result, err = nc.RemoteCall("unloadModel", params)
+	_, err = nc.RemoteCall("unloadModel", params)
 	if err != nil {
 		t.Errorf("RemoteCall for unloadModel failed: %v", err)
 	}
