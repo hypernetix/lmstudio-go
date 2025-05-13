@@ -64,7 +64,7 @@ func (l *loggerStruct) Trace(format string, v ...interface{}) {
 	}
 }
 
-// Logger is the interface for logging, it can be overriden by the client code
+// Logger is the interface for logging, it can be overridden by the client code
 type Logger interface {
 	SetLevel(level LogLevel)
 	Error(format string, v ...interface{})
