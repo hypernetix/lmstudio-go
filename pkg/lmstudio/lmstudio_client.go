@@ -23,8 +23,9 @@ type LMStudioClient struct {
 // NewLMStudioClient creates a new LM Studio client
 func NewLMStudioClient(apiHost string, logger Logger) *LMStudioClient {
 	if apiHost == "" {
-		apiHost = LMStudioAPIHost
+		apiHost = fmt.Sprintf("http://%s:%d", LMStudioAPIHosts[0], LMStudioAPIPorts[0])
 	}
+
 	if logger == nil {
 		logger = NewLogger(LogLevelError)
 	}

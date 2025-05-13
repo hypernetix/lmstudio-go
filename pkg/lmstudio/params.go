@@ -1,8 +1,11 @@
 package lmstudio
 
-// Constants
+var (
+	LMStudioAPIHosts = []string{"localhost", "127.0.0.1", "0.0.0.0"}
+	LMStudioAPIPorts = []int{1234, 12345}
+)
+
 const (
-	LMStudioAPIHost             = "localhost:1234"
 	LMStudioWsAPITimeoutSec     = 30
 	SystemAPINamespace          = "system"
 	LLMNamespace                = "llm"                  // Add LLM namespace for loaded models

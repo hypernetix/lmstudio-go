@@ -90,8 +90,8 @@ func TestNewLMStudioClient(t *testing.T) {
 		t.Fatal("Expected non-nil client")
 	}
 
-	if client.apiHost != LMStudioAPIHost {
-		t.Errorf("Expected default API host %s, got %s", LMStudioAPIHost, client.apiHost)
+	if client.apiHost != fmt.Sprintf("http://%s:%d", LMStudioAPIHosts[0], LMStudioAPIPorts[0]) {
+		t.Errorf("Expected default API host %s, got %s", fmt.Sprintf("http://%s:%d", LMStudioAPIHosts[0], LMStudioAPIPorts[0]), client.apiHost)
 	}
 
 	if client.logger == nil {
