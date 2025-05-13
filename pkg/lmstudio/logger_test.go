@@ -38,13 +38,13 @@ func captureOutput(f func()) string {
 	// Redirect log output to a buffer
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
-	
+
 	// Execute the function that produces log output
 	f()
-	
+
 	// Reset log output to stderr
 	log.SetOutput(os.Stderr)
-	
+
 	return buf.String()
 }
 

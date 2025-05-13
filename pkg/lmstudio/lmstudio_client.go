@@ -3,11 +3,11 @@ package lmstudio
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sync"
 	"time"
-	"errors"
 )
 
 // LMStudioClient represents a client for LM Studio service
