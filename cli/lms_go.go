@@ -252,6 +252,16 @@ func main() {
 		logger.SetLevel(lmstudio.LogLevelTrace)
 	}
 
+	// Handle the different operations based on flags
+	var operation bool
+
+	// Show version information if requested
+	if *showVersion {
+		operation = true
+		fmt.Printf("LM Studio Go CLI version: %s\n", lmstudio.LMStudioGoVersion)
+		os.Exit(0)
+	}
+
 	// Create an LM Studio client
 	// If host or port is not set try to discover the LM Studio server on the local network
 	serverAddress := fmt.Sprintf("%s:%d", *host, *port)
@@ -268,16 +278,6 @@ func main() {
 
 	client := lmstudio.NewLMStudioClient(serverAddress, logger)
 	defer client.Close()
-
-	// Handle the different operations based on flags
-	var operation bool
-
-	// Show version information if requested
-	if *showVersion {
-		operation = true
-		fmt.Println("LM Studio Go CLI version: 1.0")
-		os.Exit(0)
-	}
 
 	// Check if LM Studio service is running
 	if *checkStatus {
