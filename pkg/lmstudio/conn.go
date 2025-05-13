@@ -35,8 +35,18 @@ type namespaceConnection struct {
 
 // connect establishes a connection to a specific LM Studio namespace
 func (nc *namespaceConnection) connect(apiHost string, parentCtx context.Context) error {
+
+	var u url.URL
 	// Build WebSocket URL - match Python SDK's URL structure
-	u := url.URL{Scheme: "ws", Host: apiHost, Path: "/" + nc.namespace}
+	if strings.HasPrefix(apiHost, "https://") {
+		apiHost = strings.TrimPrefix(apiHost, "http://")
+		u = url.URL{Scheme: "wss", Host: apiHost, Path: "/" + nc.namespace}
+	} else if strings.HasPrefix(apiHost, "http://") {
+		apiHost = strings.TrimPrefix(apiHost, "http://")
+		u = url.URL{Scheme: "ws", Host: apiHost, Path: "/" + nc.namespace}
+	} else {
+		u = url.URL{Scheme: "ws", Host: apiHost, Path: "/" + nc.namespace}
+	}
 
 	// Try to connect with retries
 	var conn *websocket.Conn

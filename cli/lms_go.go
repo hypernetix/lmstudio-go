@@ -173,8 +173,8 @@ func main() {
 	}
 
 	// Define command-line flags
-	host := flag.String("host", "localhost", "LM Studio API host (default: localhost)")
-	port := flag.Int("port", 1234, "LM Studio API port (default: 1234)")
+	host := flag.String("host", "", fmt.Sprintf("LM Studio API host (default: %s)", lmstudio.LMStudioAPIHosts[0]))
+	port := flag.Int("port", 0, fmt.Sprintf("LM Studio API port (default: %d)", lmstudio.LMStudioAPIPorts[0]))
 	listLoaded := flag.Bool("list-loaded", false, "List all loaded models")
 	listLoadedLLMs := flag.Bool("list-loaded-llms", false, "List loaded LLM models")
 	listLoadedEmbeddings := flag.Bool("list-loaded-embeddings", false, "List loaded embedding models")
@@ -252,19 +252,32 @@ func main() {
 		logger.SetLevel(lmstudio.LogLevelTrace)
 	}
 
-	// Create an LM Studio client
-	client := lmstudio.NewLMStudioClient(fmt.Sprintf("%s:%d", *host, *port), logger)
-	defer client.Close()
-
 	// Handle the different operations based on flags
 	var operation bool
 
 	// Show version information if requested
 	if *showVersion {
 		operation = true
-		fmt.Println("LM Studio Go CLI version: 1.0")
+		fmt.Printf("LM Studio Go CLI version: %s\n", lmstudio.LMStudioGoVersion)
 		os.Exit(0)
 	}
+
+	// Create an LM Studio client
+	// If host or port is not set try to discover the LM Studio server on the local network
+	serverAddress := fmt.Sprintf("%s:%d", *host, *port)
+	if *host == "" || *port == 0 {
+		var err error
+		logger.Debug("Host and port not explicitly set, attempting to discover LM Studio server...")
+		if serverAddress, err = lmstudio.DiscoverLMStudioServer(*host, *port, logger); err == nil {
+			logger.Debug("Discovered LM Studio server at %s", serverAddress)
+		} else {
+			logger.Error("Could not discover LM Studio server, try to set host and port explicitly")
+			os.Exit(1)
+		}
+	}
+
+	client := lmstudio.NewLMStudioClient(serverAddress, logger)
+	defer client.Close()
 
 	// Check if LM Studio service is running
 	if *checkStatus {
@@ -275,7 +288,7 @@ func main() {
 			os.Exit(1)
 		}
 		if running {
-			fmt.Printf("LM Studio service status: RUNNING @ %s:%d\n", *host, *port)
+			fmt.Printf("LM Studio service status: RUNNING @ %s\n", serverAddress)
 		} else {
 			fmt.Println("LM Studio service status: NOT RUNNING")
 			os.Exit(1)
