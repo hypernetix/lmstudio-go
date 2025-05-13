@@ -1,6 +1,7 @@
 # LM Studio Go
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/hypernetix/lmstudio-go)](https://goreportcard.com/report/github.com/hypernetix/lmstudio-go)
+
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![GitHub issues](https://img.shields.io/github/issues/Dynaval81/lmstudio-go.svg)](https://github.com/hypernetix/lmstudio-go/issues)
 [![GitHub stars](https://img.shields.io/github/stars/Dynaval81/lmstudio-go.svg)](https://github.com/hypernetix/lmstudio-go/stargazers)
