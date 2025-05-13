@@ -19,3 +19,7 @@ const (
 	ConnectionRetryDelaySec     = 2
 	LMStudioAPIVersion          = 1
 )
+
+const (
+	LMStudioGoVersion = "1.0.1"
+)

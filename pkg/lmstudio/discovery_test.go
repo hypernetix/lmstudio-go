@@ -3,7 +3,10 @@ package lmstudio
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestGenerateUrls(t *testing.T) {
@@ -98,6 +101,19 @@ func TestDiscoverLMStudioServer(t *testing.T) {
 			expectError: true,
 		},
 	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Parse the port from the server URL
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("Failed to parse server URL: %v", err)
+	}
+	port, err := strconv.Atoi(serverURL.Port())
+	if err != nil {
+		t.Fatalf("Failed to parse port from server URL: %v", err)
+	}
+	tests[0].port = port
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
