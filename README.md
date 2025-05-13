@@ -1,7 +1,10 @@
 # LM Studio Go
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/hypernetix/lmstudio-go)](https://goreportcard.com/report/github.com/hypernetix/lmstudio-go)
-[![License: Apache2.0](https://img.shields.io/badge/License-apache2-yellow.svg)](https://opensource.org/licenses/apache-2-0)
+
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![GitHub issues](https://img.shields.io/github/issues/Dynaval81/lmstudio-go.svg)](https://github.com/hypernetix/lmstudio-go/issues)
+[![GitHub stars](https://img.shields.io/github/stars/Dynaval81/lmstudio-go.svg)](https://github.com/hypernetix/lmstudio-go/stargazers)
 
 **LM Studio Go** is an open-source Go SDK and CLI for managing and interacting with Large Language Models (LLMs) via [LM Studio](https://lmstudio.ai)'s WebSocket API.  
 Easily load, manage, and chat with LLMs in your Go applications or from the command line.
@@ -299,8 +302,6 @@ make install
 # Clean up build artifacts and coverage files
 make clean
 ```
-
-
 ## License
 
-[Apache License 2.0](LICENSE.md)
+This project is licensed under the [Apache 2.0 License](LICENSE).
