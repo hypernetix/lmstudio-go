@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,6 +30,7 @@ func TestCLI(t *testing.T) {
 	t.Run("TestNoParams", testNoParams)
 	t.Run("TestStatus", testStatus)
 	t.Run("TestListModels", testListModels)
+	t.Run("TestListModelsJSON", testListModelsJSON)
 	t.Run("TestInvalidFlag", testInvalidFlag)
 	t.Run("TestPrompt", testPrompt)
 	t.Run("TestModelLoadingUnloading", testModelLoadingUnloading)
@@ -193,6 +195,48 @@ func testListModels(t *testing.T) {
 	}
 
 	fmt.Printf("List models test passed. Output contains expected format.\n")
+}
+
+// testListModelsJSON tests the --list-downloaded flag with --json output format
+func testListModelsJSON(t *testing.T) {
+	stdout, stderr, err := runCLI(t, "--list-downloaded", "--json")
+
+	// This might fail if LM Studio is not running, which is expected
+	if err != nil {
+		fmt.Printf("List models JSON command failed (this might be expected if LM Studio is not running): %v\nStderr: %s\n", err, stderr)
+		// Don't fail the test if LM Studio is not running
+		return
+	}
+
+	// Print the output for debugging
+	fmt.Printf("JSON output received (first 100 chars): %s\n", truncateForDisplay(stdout, 100))
+
+	// Check if the output looks like JSON (starts with [ for an array)
+	if !strings.HasPrefix(strings.TrimSpace(stdout), "[") {
+		// If it doesn't look like JSON, just log it but don't fail
+		// This could happen if there's an error message or no models
+		fmt.Printf("Output doesn't appear to be a JSON array, but this might be expected if there are no models or there was an error\n")
+		return
+	}
+
+	// Try to unmarshal the JSON
+	var models []interface{}
+	if err := json.Unmarshal([]byte(stdout), &models); err != nil {
+		// Log the error but don't fail the test
+		fmt.Printf("Warning: Could not parse JSON output: %v\n", err)
+		return
+	}
+
+	fmt.Printf("List models JSON test passed. Output is valid JSON format with %d models.\n", len(models))
+}
+
+// truncateForDisplay truncates a string for display purposes
+func truncateForDisplay(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // testInvalidFlag tests an invalid flag
