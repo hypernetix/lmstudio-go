@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json" // Added this import
 	"flag"
 	"fmt"
 	"os"
@@ -69,8 +70,18 @@ func printTableHeader(columns []string, widths []int) {
 	fmt.Println()
 }
 
-// printModels prints models in a nice table format
-func printModels(models []lmstudio.Model, title string) {
+// printModels prints models in a nice table format or JSON
+func printModels(models []lmstudio.Model, title string, jsonOutput bool) { // Added jsonOutput parameter
+	if jsonOutput {
+		jsonData, err := json.MarshalIndent(models, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshalling to JSON: %v\n", err)
+			os.Exit(1) // Or handle error more gracefully
+		}
+		fmt.Println(string(jsonData))
+		return
+	}
+
 	fmt.Printf("\n%s:\n", title)
 	if len(models) == 0 {
 		fmt.Printf("No %s found\n", strings.ToLower(title))
@@ -190,6 +201,7 @@ func main() {
 	waitForInterrupt := flag.Bool("wait", false, "Wait for Ctrl+C to exit after command execution")
 	checkStatus := flag.Bool("status", false, "Check if the LM Studio service is running")
 	showVersion := flag.Bool("version", false, "Show version information")
+	jsonOutput := flag.Bool("json", false, "Output list commands in JSON format") // Added this flag
 
 	// Parse command line flags
 	flag.Parse()
@@ -303,7 +315,7 @@ func main() {
 			logger.Error("Failed to list loaded models: %v", err)
 			os.Exit(1)
 		}
-		printModels(models, "Loaded Models")
+		printModels(models, "Loaded Models", *jsonOutput) // Pass jsonOutput
 	}
 
 	// List loaded LLM models
@@ -314,7 +326,7 @@ func main() {
 			logger.Error("Failed to list loaded LLM models: %v", err)
 			os.Exit(1)
 		}
-		printModels(models, "Loaded LLM Models")
+		printModels(models, "Loaded LLM Models", *jsonOutput) // Pass jsonOutput
 	}
 
 	// List loaded embedding models
@@ -325,7 +337,7 @@ func main() {
 			logger.Error("Failed to list loaded embedding models: %v", err)
 			os.Exit(1)
 		}
-		printModels(models, "Loaded Embedding Models")
+		printModels(models, "Loaded Embedding Models", *jsonOutput) // Pass jsonOutput
 	}
 
 	// List downloaded models
@@ -336,7 +348,7 @@ func main() {
 			logger.Error("Failed to list downloaded models: %v", err)
 			os.Exit(1)
 		}
-		printModels(models, "Downloaded Models")
+		printModels(models, "Downloaded Models", *jsonOutput) // Pass jsonOutput
 	}
 
 	// Load a model
@@ -429,8 +441,12 @@ func main() {
 		models, err := client.ListAllLoadedModels()
 		if err != nil {
 			logger.Error("Failed to list loaded models: %v", err)
+			// Decide if os.Exit(1) is appropriate here or just log
 		}
-		printModels(models, "Loaded Models")
+		// Only print if there was no error or if models is not nil
+		if models != nil {
+			printModels(models, "Loaded Models", *jsonOutput) // Pass jsonOutput
+		}
 	}
 
 	// Wait for Ctrl+C to exit if requested
