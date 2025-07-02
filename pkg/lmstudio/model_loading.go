@@ -173,11 +173,14 @@ func (ch *ModelLoadingChannel) processMessage(message []byte) {
 				// Model resolution event - log but don't take any action
 				ch.conn.logger.Trace("Channel %d: model resolved", ch.channelID)
 			case "success":
-				// Model loaded successfully
-				ch.conn.logger.Trace("Channel %d: success message received", ch.channelID)
+				// Model loading completed successfully
 				if info, ok := messageContent["info"].(map[string]interface{}); ok {
 					if identifier, ok := info["identifier"].(string); ok {
 						ch.conn.logger.Debug("Channel %d: model loaded with identifier %s", ch.channelID, identifier)
+
+						// Ensure progress reaches 100% when model loading completes
+						ch.forceUpdateProgress(1.0)
+
 						ch.mu.Lock()
 						ch.isFinished = true
 						ch.mu.Unlock()
@@ -207,6 +210,9 @@ func (ch *ModelLoadingChannel) processMessage(message []byte) {
 		ch.conn.logger.Debug("Channel %d success message received", ch.channelID)
 		if content, ok := msg["content"].(map[string]interface{}); ok {
 			if identifier, ok := content["identifier"].(string); ok {
+				// Ensure progress reaches 100% when model loading completes
+				ch.forceUpdateProgress(1.0)
+
 				ch.mu.Lock()
 				ch.isFinished = true
 				ch.mu.Unlock()
@@ -271,13 +277,41 @@ func (ch *ModelLoadingChannel) updateProgress(progress float64) {
 	}
 }
 
+// forceUpdateProgress updates progress and always calls the callback, used for completion
+func (ch *ModelLoadingChannel) forceUpdateProgress(progress float64) {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+
+	ch.lastProgress = progress
+
+	// Always call progress function if provided, regardless of previous progress
+	if ch.progressFn != nil {
+		ch.progressFn(progress)
+	}
+}
+
 // WaitForResult waits for the model loading to complete
 func (ch *ModelLoadingChannel) WaitForResult(timeout time.Duration) (*ModelLoadingResult, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return ch.WaitForResultWithContext(context.Background(), timeout)
+}
+
+// WaitForResultWithContext waits for the model loading to complete with cancellation support
+func (ch *ModelLoadingChannel) WaitForResultWithContext(ctx context.Context, timeout time.Duration) (*ModelLoadingResult, error) {
+	// Check if context is already cancelled
+	select {
+	case <-ctx.Done():
+		ch.sendCancellationWithCleanup()
+		ch.conn.logger.Debug("Model loading cancelled before wait: %v", ctx.Err())
+		return nil, fmt.Errorf("model loading cancelled: %w", ctx.Err())
+	default:
+	}
+
+	// Create a timeout context that respects the parent context
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Log occasional updates during waiting
-	ticker := time.NewTicker(5 * time.Second)
+	// Log occasional updates during waiting (every 2 seconds instead of 5 for better responsiveness)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -290,23 +324,119 @@ func (ch *ModelLoadingChannel) WaitForResult(timeout time.Duration) (*ModelLoadi
 			ch.conn.logger.Error("Received error for channel %d (model: %s): %v", ch.channelID, ch.modelKey, err)
 			return nil, err
 
-		case <-ticker.C:
-			// Periodically check for messages from server
-			ch.conn.logger.Trace("Channel %d (model: %s) waiting for messages... (%.1f%% done)",
-				ch.channelID, ch.modelKey, ch.lastProgress*100)
+		case <-ctx.Done():
+			// Parent context cancelled - immediate cancellation
+			ch.conn.logger.Debug("Parent context cancelled for channel %d (model: %s) - sending immediate cancellation", ch.channelID, ch.modelKey)
+			ch.sendCancellationWithCleanup()
+			return nil, fmt.Errorf("model loading cancelled: %w", ctx.Err())
 
-			// Check connection status
+		case <-timeoutCtx.Done():
+			if timeoutCtx.Err() == context.DeadlineExceeded {
+				ch.conn.logger.Debug("Model loading timed out for channel %d after %v", ch.channelID, timeout)
+				ch.sendCancellationWithCleanup()
+				return nil, fmt.Errorf("model loading timed out after %v", timeout)
+			}
+			// This should not happen since we handle parent context cancellation above
+			ch.conn.logger.Debug("Timeout context cancelled for channel %d: %v", ch.channelID, timeoutCtx.Err())
+			ch.sendCancellationWithCleanup()
+			return nil, fmt.Errorf("model loading cancelled: %w", timeoutCtx.Err())
+
+		case <-ticker.C:
+			// Check context more frequently and log connection status
+			select {
+			case <-ctx.Done():
+				ch.conn.logger.Debug("Parent context cancelled during ticker for channel %d", ch.channelID)
+				ch.sendCancellationWithCleanup()
+				return nil, fmt.Errorf("model loading cancelled: %w", ctx.Err())
+			default:
+			}
+
+			// Check connection status periodically
 			ch.conn.mu.Lock()
 			isConnected := ch.conn.connected
 			ch.conn.mu.Unlock()
 
 			if !isConnected {
+				ch.conn.logger.Debug("Connection lost while waiting for model to load")
 				return nil, fmt.Errorf("connection lost while waiting for model to load")
 			}
-
-		case <-ctx.Done():
-			return nil, fmt.Errorf("model loading timed out after %v", timeout)
 		}
+	}
+}
+
+// sendCancellationWithCleanup sends cancellation and performs thorough cleanup
+func (ch *ModelLoadingChannel) sendCancellationWithCleanup() {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+
+	if ch.isFinished {
+		return // Already finished
+	}
+
+	ch.isFinished = true
+
+	ch.conn.logger.Debug("Attempting to cancel model loading for channel %d (model: %s)", ch.channelID, ch.modelKey)
+
+	// First, try to unload the model that's being loaded to force-stop the loading process
+	// This is more aggressive than just closing the channel and ensures proper cancellation
+	unloadCallID := ch.channelID + 10000 // Use a unique call ID
+	unloadMsg := map[string]interface{}{
+		"type":     "rpcCall",
+		"callId":   unloadCallID,
+		"endpoint": "unloadModel",
+		"parameter": map[string]interface{}{
+			"identifier": ch.modelKey,
+		},
+	}
+
+	ch.conn.logger.Debug("Sending unload request to force-stop loading for model: %s (call ID: %d)", ch.modelKey, unloadCallID)
+
+	// Track this call ID so we don't log errors for the response
+	ch.conn.mu.Lock()
+	if ch.conn.pendingUnloadCalls == nil {
+		ch.conn.pendingUnloadCalls = make(map[int]bool)
+	}
+	ch.conn.pendingUnloadCalls[unloadCallID] = true
+	ch.conn.mu.Unlock()
+
+	// Send the unload request (best effort, don't wait for response)
+	err := ch.conn.conn.WriteJSON(unloadMsg)
+	if err != nil {
+		ch.conn.logger.Debug("Failed to send unload request for model %s: %v", ch.modelKey, err)
+	} else {
+		ch.conn.logger.Debug("Sent unload request for model %s", ch.modelKey)
+	}
+
+	// Small delay to allow the unload request to be processed
+	time.Sleep(100 * time.Millisecond)
+
+	// Now send channel close message to cleanup the channel
+	closeMsg := map[string]interface{}{
+		"type":      "channelClose",
+		"channelId": ch.channelID,
+	}
+
+	ch.conn.logger.Debug("Sending channel close for channel %d", ch.channelID)
+
+	// Send the close message
+	err = ch.conn.conn.WriteJSON(closeMsg)
+	if err != nil {
+		ch.conn.logger.Debug("Failed to send channel close message for channel %d: %v", ch.channelID, err)
+	} else {
+		ch.conn.logger.Debug("Sent channel close message for channel %d", ch.channelID)
+	}
+
+	// Clean up the channel from active channels
+	ch.conn.mu.Lock()
+	delete(ch.conn.activeChannels, ch.channelID)
+	ch.conn.mu.Unlock()
+
+	// Signal the message handler to stop if not already closed
+	select {
+	case <-ch.cancelCh:
+		// Already closed
+	default:
+		close(ch.cancelCh)
 	}
 }
 

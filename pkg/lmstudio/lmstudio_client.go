@@ -3,7 +3,6 @@ package lmstudio
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -288,8 +287,29 @@ func (c *LMStudioClient) LoadModel(modelIdentifier string) error {
 	return c.waitForModelLoading(channel, modelIdentifier, loadTimeout)
 }
 
-// LoadModelWithProgress loads a specified model in LM Studio with progress reporting
-func (c *LMStudioClient) LoadModelWithProgress(modelIdentifier string, progressCallback func(progress float64, modelInfo *Model)) error {
+// LoadModelWithProgress loads a specified model in LM Studio with progress reporting and cancellation support
+func (c *LMStudioClient) LoadModelWithProgress(
+	loadTimeout time.Duration,
+	modelIdentifier string,
+	progressCallback func(progress float64, modelInfo *Model),
+) error {
+	return c.LoadModelWithProgressContext(context.Background(), loadTimeout, modelIdentifier, progressCallback)
+}
+
+// LoadModelWithProgressContext loads a specified model in LM Studio with progress reporting and cancellation support via context
+func (c *LMStudioClient) LoadModelWithProgressContext(
+	ctx context.Context,
+	loadTimeout time.Duration,
+	modelIdentifier string,
+	progressCallback func(progress float64, modelInfo *Model),
+) error {
+	// Check if context is already cancelled
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("model loading cancelled before start: %w", ctx.Err())
+	default:
+	}
+
 	// Get model information from downloaded models
 	var modelInfo *Model
 	downloadedModels, err := c.ListDownloadedModels()
@@ -338,8 +358,46 @@ func (c *LMStudioClient) LoadModelWithProgress(modelIdentifier string, progressC
 	}
 
 	// Use a longer timeout for model loading - some large models can take several minutes
-	loadTimeout := 120 * time.Second
-	return c.waitForModelLoading(channel, modelIdentifier, loadTimeout)
+	return c.waitForModelLoadingWithContext(ctx, channel, modelIdentifier, loadTimeout)
+}
+
+// waitForModelLoadingWithContext waits for a model to finish loading with cancellation support
+func (c *LMStudioClient) waitForModelLoadingWithContext(ctx context.Context, channel *ModelLoadingChannel, modelIdentifier string, loadTimeout time.Duration) error {
+	c.logger.Debug("Waiting for model %s to load (timeout: %d seconds)...",
+		modelIdentifier, int(loadTimeout.Seconds()))
+
+	// Create a context that combines the parent context with timeout
+	timeoutCtx, cancel := context.WithTimeout(ctx, loadTimeout)
+	defer cancel()
+
+	// Use the channel's context-aware wait method
+	result, err := channel.WaitForResultWithContext(timeoutCtx, loadTimeout)
+
+	if err != nil {
+		// Check if this was a timeout vs other cancellation
+		if timeoutCtx.Err() == context.DeadlineExceeded {
+			c.logger.Error("Model loading timed out after %v for %s", loadTimeout, modelIdentifier)
+			return fmt.Errorf("model loading timed out after %v", loadTimeout)
+		}
+
+		// Check if this was a cancellation from parent context
+		if ctx.Err() != nil {
+			c.logger.Debug("Model loading cancelled for %s: %v", modelIdentifier, ctx.Err())
+			return fmt.Errorf("model loading cancelled: %w", ctx.Err())
+		}
+
+		// Other error
+		c.logger.Error("Model loading failed for %s: %v", modelIdentifier, err)
+		return fmt.Errorf("model loading failed: %w", err)
+	}
+
+	if !result.Success {
+		c.logger.Error("Model %s failed to load", modelIdentifier)
+		return fmt.Errorf("model %s failed to load", modelIdentifier)
+	}
+
+	c.logger.Debug("Model %s loaded successfully with identifier: %s", modelIdentifier, result.Identifier)
+	return nil
 }
 
 // UnloadModel unloads a specified model in LM Studio
@@ -482,7 +540,7 @@ func (c *LMStudioClient) CheckStatus() (bool, error) {
 	// If we can connect, check if we can make a simple API call
 	_, err = conn.RemoteCall(ModelListDownloadedEndpoint, nil)
 	if err != nil {
-		return false, errors.New("service is running but API is not responding correctly: " + err.Error())
+		return false, fmt.Errorf("service is running but API is not responding correctly: %w", err)
 	}
 
 	// If we get here, the service is running and responding to API calls

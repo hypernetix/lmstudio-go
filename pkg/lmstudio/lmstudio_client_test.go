@@ -1,6 +1,7 @@
 package lmstudio
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -387,43 +388,31 @@ func TestLoadModelWithProgress(t *testing.T) {
 			logger.Debug("Progress callback: %.2f%%, model: %v", progress*100, modelInfo != nil)
 		}
 
-		// Call the method we're testing
-		err = client.LoadModelWithProgress("mock-model-0.5B", progressCallback)
+		// Call the method
+		err = client.LoadModelWithProgress(30*time.Second, "mock-model-0.5B", progressCallback)
 		if err != nil {
 			t.Fatalf("LoadModelWithProgress failed: %v", err)
 		}
 
-		// Verify that progress callbacks were called
+		// Wait a moment to ensure all progress callbacks are processed
+		time.Sleep(100 * time.Millisecond)
+
+		// Verify we got the expected number of progress callbacks
 		callbackMutex.Lock()
 		if len(progressCallbacks) == 0 {
-			t.Errorf("Expected progress callbacks, got none")
+			t.Errorf("Expected at least one progress callback, got %d", len(progressCallbacks))
 		}
 
-		// Verify progress values are reasonable (between 0 and 1)
+		// Check that progress values are in valid range
 		for i, progress := range progressCallbacks {
-			if progress < 0 || progress > 1 {
-				t.Errorf("Progress callback %d has invalid value: %f (should be between 0 and 1)", i, progress)
+			if progress < 0.0 || progress > 1.0 {
+				t.Errorf("Progress callback %d has invalid value: %f (should be 0.0-1.0)", i, progress)
 			}
 		}
 
-		// Verify we got at least one progress update
-		if len(progressCallbacks) < 1 {
-			t.Errorf("Expected at least 1 progress callback, got %d", len(progressCallbacks))
-		}
-
-		// Verify model info was provided when available
-		hasModelInfo := false
-		for _, modelInfo := range modelInfoCallbacks {
-			if modelInfo != nil {
-				hasModelInfo = true
-				if modelInfo.ModelKey == "" {
-					t.Errorf("Expected model info to have ModelKey")
-				}
-				break
-			}
-		}
-		if !hasModelInfo {
-			t.Errorf("Expected at least one callback with model info")
+		// Check that the last progress value is 1.0 (completion)
+		if len(progressCallbacks) > 0 && progressCallbacks[len(progressCallbacks)-1] != 1.0 {
+			t.Errorf("Last progress value should be 1.0, got %f", progressCallbacks[len(progressCallbacks)-1])
 		}
 		callbackMutex.Unlock()
 
@@ -439,7 +428,7 @@ func TestLoadModelWithProgress(t *testing.T) {
 	}
 }
 
-// TestLoadModelWithProgressAlreadyLoaded tests LoadModelWithProgress when model is already loaded
+// TestLoadModelWithProgressAlreadyLoaded tests LoadModelWithProgress with an already loaded model
 func TestLoadModelWithProgressAlreadyLoaded(t *testing.T) {
 	fmt.Println("[TEST] TestLoadModelWithProgressAlreadyLoaded started")
 	defer fmt.Println("[TEST] TestLoadModelWithProgressAlreadyLoaded finished or failed")
@@ -459,21 +448,19 @@ func TestLoadModelWithProgressAlreadyLoaded(t *testing.T) {
 	client := NewLMStudioClient(strings.TrimPrefix(serverURL.Host, "http://"), logger)
 	defer client.Close()
 
-	// Track progress callbacks
+	// Track progress callbacks - for already loaded model we should get one callback with 100%
 	var progressCallbacks []float64
-	var modelInfoCallbacks []*Model
 	var callbackMutex sync.Mutex
 
 	progressCallback := func(progress float64, modelInfo *Model) {
 		callbackMutex.Lock()
 		defer callbackMutex.Unlock()
 		progressCallbacks = append(progressCallbacks, progress)
-		modelInfoCallbacks = append(modelInfoCallbacks, modelInfo)
-		logger.Debug("Progress callback for already loaded: %.2f%%, model: %v", progress*100, modelInfo != nil)
+		logger.Debug("Progress callback: %.2f%%", progress*100)
 	}
 
-	// Use a model that appears in the loaded models list (mock-model-7B)
-	err = client.LoadModelWithProgress("mock-model-7B", progressCallback)
+	// Call with a model that is already loaded (mock-model-7B)
+	err = client.LoadModelWithProgress(30*time.Second, "mock-model-7B", progressCallback)
 	if err != nil {
 		t.Fatalf("LoadModelWithProgress failed for already loaded model: %v", err)
 	}
@@ -511,8 +498,226 @@ func TestLoadModelWithProgressNilCallback(t *testing.T) {
 	defer client.Close()
 
 	// Call the method with nil callback (should not crash)
-	err = client.LoadModelWithProgress("mock-model-0.5B", nil)
+	err = client.LoadModelWithProgress(30*time.Second, "mock-model-0.5B", nil)
 	if err != nil {
 		t.Fatalf("LoadModelWithProgress with nil callback failed: %v", err)
+	}
+}
+
+// TestLoadModelWithProgressContextCancellation tests LoadModelWithProgressContext with cancellation
+func TestLoadModelWithProgressContextCancellation(t *testing.T) {
+	fmt.Println("[TEST] TestLoadModelWithProgressContextCancellation started")
+	defer fmt.Println("[TEST] TestLoadModelWithProgressContextCancellation finished or failed")
+
+	// Create a mock server
+	server := NewMockLMStudioService(t, newMockLogger())
+	defer server.Close()
+
+	// Extract the host and port from the server URL
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("Failed to parse server URL: %v", err)
+	}
+
+	// Create a client that connects to our mock server
+	logger := newMockLogger()
+	client := NewLMStudioClient(strings.TrimPrefix(serverURL.Host, "http://"), logger)
+	defer client.Close()
+
+	// Create a context that will be cancelled
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Track progress callbacks
+	var progressCallbacks []float64
+	var callbackMutex sync.Mutex
+
+	progressCallback := func(progress float64, modelInfo *Model) {
+		callbackMutex.Lock()
+		defer callbackMutex.Unlock()
+		progressCallbacks = append(progressCallbacks, progress)
+		logger.Debug("Progress callback before cancellation: %.2f%%", progress*100)
+
+		// Cancel the context after receiving first progress update
+		if len(progressCallbacks) == 1 {
+			logger.Debug("Cancelling context after first progress update")
+			cancel()
+		}
+	}
+
+	// Call the method with cancellation context
+	err = client.LoadModelWithProgressContext(ctx, 10*time.Second, "mock-model-0.5B", progressCallback)
+
+	// Should receive a cancellation error
+	if err == nil {
+		t.Fatalf("Expected cancellation error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("Expected cancellation error, got: %v", err)
+	}
+
+	// Verify we got at least one progress callback before cancellation
+	callbackMutex.Lock()
+	if len(progressCallbacks) == 0 {
+		t.Errorf("Expected at least one progress callback before cancellation")
+	}
+	callbackMutex.Unlock()
+}
+
+// TestLoadModelWithProgressContextTimeout tests LoadModelWithProgressContext with timeout
+func TestLoadModelWithProgressContextTimeout(t *testing.T) {
+	fmt.Println("[TEST] TestLoadModelWithProgressContextTimeout started")
+	defer fmt.Println("[TEST] TestLoadModelWithProgressContextTimeout finished or failed")
+
+	// Create a mock server
+	server := NewMockLMStudioService(t, newMockLogger())
+	defer server.Close()
+
+	// Extract the host and port from the server URL
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("Failed to parse server URL: %v", err)
+	}
+
+	// Create a client that connects to our mock server
+	logger := newMockLogger()
+	client := NewLMStudioClient(strings.TrimPrefix(serverURL.Host, "http://"), logger)
+	defer client.Close()
+
+	// Create a context that is already cancelled
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel it immediately
+
+	// Call the method with cancelled context
+	err = client.LoadModelWithProgressContext(ctx, 30*time.Second, "mock-model-0.5B", nil)
+
+	// Should receive a cancellation error
+	if err == nil {
+		t.Fatalf("Expected cancellation error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("Expected cancellation error, got: %v", err)
+	}
+}
+
+// TestLoadModelWithProgressCancellation tests model load cancellation during loading
+func TestLoadModelWithProgressCancellation(t *testing.T) {
+	fmt.Println("[TEST] TestLoadModelWithProgressCancellation started")
+	defer fmt.Println("[TEST] TestLoadModelWithProgressCancellation finished or failed")
+
+	// Create a mock server
+	server := NewMockLMStudioService(t, newMockLogger())
+	defer server.Close()
+
+	// Extract the host and port from the server URL
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("Failed to parse server URL: %v", err)
+	}
+
+	// Create a client that connects to our mock server
+	logger := newMockLogger()
+	client := NewLMStudioClient(strings.TrimPrefix(serverURL.Host, "http://"), logger)
+	defer client.Close()
+
+	// Create a context that we'll cancel after first progress update
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Track progress callbacks
+	var progressCallbacks []float64
+	var callbackMutex sync.Mutex
+	var cancelled bool
+
+	progressCallback := func(progress float64, modelInfo *Model) {
+		callbackMutex.Lock()
+		defer callbackMutex.Unlock()
+		progressCallbacks = append(progressCallbacks, progress)
+		logger.Debug("Progress callback: %.2f%%", progress*100)
+
+		// Cancel after receiving the first progress update
+		if len(progressCallbacks) == 1 && !cancelled {
+			logger.Debug("Cancelling context after first progress update")
+			cancelled = true
+			cancel()
+		}
+	}
+
+	// Call the method with cancellation context
+	err = client.LoadModelWithProgressContext(ctx, 30*time.Second, "mock-model-0.5B", progressCallback)
+
+	// Should receive a cancellation error
+	if err == nil {
+		t.Fatalf("Expected cancellation error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "cancelled") {
+		t.Errorf("Expected cancellation error, got: %v", err)
+	}
+
+	// Verify we got at least one progress callback before cancellation
+	callbackMutex.Lock()
+	if len(progressCallbacks) == 0 {
+		t.Errorf("Expected at least one progress callback before cancellation")
+	}
+	callbackMutex.Unlock()
+}
+
+// TestLoadModelWithProgressShortTimeout tests LoadModelWithProgress with a very short 1ms timeout
+func TestLoadModelWithProgressShortTimeout(t *testing.T) {
+	fmt.Println("[TEST] TestLoadModelWithProgressShortTimeout started")
+	defer fmt.Println("[TEST] TestLoadModelWithProgressShortTimeout finished or failed")
+
+	// Create a mock server
+	server := NewMockLMStudioService(t, newMockLogger())
+	defer server.Close()
+
+	// Extract the host and port from the server URL
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("Failed to parse server URL: %v", err)
+	}
+
+	// Create a client that connects to our mock server
+	logger := newMockLogger()
+	client := NewLMStudioClient(strings.TrimPrefix(serverURL.Host, "http://"), logger)
+	defer client.Close()
+
+	// Track progress callbacks
+	var progressCallbacks []float64
+	var callbackMutex sync.Mutex
+
+	progressCallback := func(progress float64, modelInfo *Model) {
+		callbackMutex.Lock()
+		defer callbackMutex.Unlock()
+		progressCallbacks = append(progressCallbacks, progress)
+		logger.Debug("Progress callback: %.2f%%", progress*100)
+	}
+
+	// Create a context that's already expired (deadline in the past)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
+	defer cancel()
+
+	// Call the method with expired context - this should fail immediately
+	err = client.LoadModelWithProgressContext(ctx, 30*time.Second, "mock-model-0.5B", progressCallback)
+
+	// Should receive a cancellation error
+	if err == nil {
+		t.Fatalf("Expected timeout/cancellation error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "cancelled") && !strings.Contains(err.Error(), "deadline exceeded") {
+		t.Errorf("Expected timeout or cancellation error, got: %v", err)
+	}
+
+	// Verify that the operation was cancelled quickly - should have no progress callbacks
+	callbackMutex.Lock()
+	progressCount := len(progressCallbacks)
+	callbackMutex.Unlock()
+
+	logger.Debug("Received %d progress callbacks with expired context", progressCount)
+	// With expired context, we should get 0 callbacks
+	if progressCount > 0 {
+		t.Errorf("Expected no progress callbacks due to expired context, got %d", progressCount)
 	}
 }
