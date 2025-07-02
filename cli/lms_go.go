@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json" // Added this import
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/hypernetix/lmstudio-go/pkg/lmstudio"
 )
@@ -195,61 +198,114 @@ func truncateString(s string, maxLen int) string {
 }
 
 // loadModelWithProgress loads a model and displays a progress bar with model information
-func loadModelWithProgress(client *lmstudio.LMStudioClient, modelIdentifier string, logger lmstudio.Logger) error {
-	var modelInfo *lmstudio.Model
-	var modelDisplayed bool
-	var lastProgress float64 = -1
+func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Duration, modelIdentifier string, logger lmstudio.Logger) error {
+	// Create a context that can be cancelled
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Use the client's LoadModelWithProgress method
-	err := client.LoadModelWithProgress(modelIdentifier, func(progress float64, info *lmstudio.Model) {
-		// Display model info on first callback
-		if !modelDisplayed {
-			modelInfo = info
-			if modelInfo != nil {
-				quietPrintf("Loading model \"%s\" (size: %s, format: %s) ...\n", modelInfo.ModelKey, formatSize(modelInfo.Size), modelInfo.Format)
-				if modelInfo.Size > 0 {
-					// Extract format from model info for display
-					format := modelInfo.Format
-					if format == "" && modelInfo.Path != "" {
-						if strings.Contains(modelInfo.Path, "MLX") {
-							format = "MLX"
-						} else if strings.Contains(modelInfo.Path, "GGUF") {
-							format = "GGUF"
+	// Set up signal handling for Ctrl+C cancellation
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Channel to communicate completion or error
+	done := make(chan error, 1)
+
+	// Start the loading process in a goroutine
+	go func() {
+		var modelInfo *lmstudio.Model
+		var modelDisplayed bool
+		var lastProgress float64 = -1
+
+		// Use the client's LoadModelWithProgressContext method
+		err := client.LoadModelWithProgressContext(ctx, loadTimeout, modelIdentifier, func(progress float64, info *lmstudio.Model) {
+			// Display model info on first callback
+			if !modelDisplayed {
+				modelInfo = info
+				if modelInfo != nil {
+					quietPrintf("Loading model \"%s\" (size: %s, format: %s) ...\n", modelInfo.ModelKey, formatSize(modelInfo.Size), modelInfo.Format)
+					if modelInfo.Size > 0 {
+						// Extract format from model info for display
+						format := modelInfo.Format
+						if format == "" && modelInfo.Path != "" {
+							if strings.Contains(modelInfo.Path, "MLX") {
+								format = "MLX"
+							} else if strings.Contains(modelInfo.Path, "GGUF") {
+								format = "GGUF"
+							}
+						}
+
+						// Display size and format like in the screenshot
+						sizeStr := formatSize(modelInfo.Size)
+						if format != "" {
+							quietPrintf("Model: %s (%s)\n", sizeStr, format)
+						} else {
+							quietPrintf("Model: %s\n", sizeStr)
 						}
 					}
-
-					// Display size and format like in the screenshot
-					sizeStr := formatSize(modelInfo.Size)
-					if format != "" {
-						quietPrintf("Model: %s (%s)\n", sizeStr, format)
-					} else {
-						quietPrintf("Model: %s\n", sizeStr)
-					}
+				} else {
+					quietPrintf("Loading model \"%s\" ...\n", modelIdentifier)
 				}
-			} else {
-				quietPrintf("Loading model \"%s\" ...\n", modelIdentifier)
+				modelDisplayed = true
 			}
-			modelDisplayed = true
+
+			// Only update progress if it increased significantly to avoid flickering
+			if progress > lastProgress+0.001 || progress >= 1.0 {
+				displayProgressBar(progress)
+				lastProgress = progress
+			}
+
+			// If model was already loaded, show completion immediately
+			if progress >= 1.0 {
+				quietPrintf("\n✓ Model loaded successfully\n")
+			}
+		})
+
+		done <- err
+	}()
+
+	// Wait for either completion or cancellation signal
+	select {
+	case err := <-done:
+		// Loading completed (successfully or with error)
+		if err != nil {
+			if strings.Contains(err.Error(), "cancelled") {
+				quietPrintf("\n⚠ Model loading cancelled\n")
+			} else {
+				quietPrintf("\nFailed to load model: %v\n", err)
+			}
+			return err
+		}
+		return nil
+
+	case sig := <-sigChan:
+		// User pressed Ctrl+C or sent termination signal
+		logger.Debug("Received signal: %v", sig)
+
+		// Clear progress bar if displayed
+		if !quietMode {
+			fmt.Printf("\r%s\r", strings.Repeat(" ", 80)) // Clear the line
 		}
 
-		// Only update progress if it increased significantly to avoid flickering
-		if progress > lastProgress+0.001 || progress >= 1.0 {
-			displayProgressBar(progress)
-			lastProgress = progress
+		quietPrintf("\n⚠ Model loading cancelled by user\n")
+
+		// Cancel the context to stop the loading operation
+		cancel()
+
+		// Wait a short time for graceful cancellation
+		select {
+		case <-done:
+			// Loading operation acknowledged the cancellation
+		case <-func() <-chan struct{} {
+			timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), time.Second*2)
+			defer timeoutCancel()
+			return timeoutCtx.Done()
+		}():
+			// Timeout waiting for graceful cancellation
+			logger.Debug("Timeout waiting for loading cancellation")
 		}
 
-		// If model was already loaded, show completion immediately
-		if progress >= 1.0 {
-			quietPrintf("\n✓ Model loaded successfully\n")
-		}
-	})
-
-	if err != nil {
-		quietPrintf("\nFailed to load model: %v\n", err)
-		return err
+		return fmt.Errorf("model loading cancelled by user")
 	}
-
-	return nil
 }
 
 // displayProgressBar shows a progress bar similar to the screenshot
@@ -308,6 +364,7 @@ func main() {
 	jsonOutput := flag.Bool("json", false, "Output list commands in JSON format")
 	quiet := flag.Bool("q", false, "Quiet mode - suppress all stdout messages except JSON output and errors")
 	quietLong := flag.Bool("quiet", false, "Quiet mode - suppress all stdout messages except JSON output and errors")
+	loadTimeout := flag.Duration("timeout", 120*time.Second, "Timeout for loading a model")
 
 	// Parse command line flags
 	flag.Parse()
@@ -463,7 +520,7 @@ func main() {
 	// Load a model
 	if *loadModel != "" {
 		operation = true
-		if err := loadModelWithProgress(client, *loadModel, logger); err != nil {
+		if err := loadModelWithProgress(client, *loadTimeout, *loadModel, logger); err != nil {
 			logger.Error("Failed to load model: %v", err)
 			os.Exit(1)
 		}
