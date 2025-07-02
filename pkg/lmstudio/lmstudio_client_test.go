@@ -344,3 +344,175 @@ func TestSendPrompt(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadModelWithProgress tests the LoadModelWithProgress method
+func TestLoadModelWithProgress(t *testing.T) {
+	fmt.Println("[TEST] TestLoadModelWithProgress started")
+	defer fmt.Println("[TEST] TestLoadModelWithProgress finished or failed")
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("TestLoadModelWithProgress panicked: %v", r)
+		}
+	}()
+
+	t.Parallel()
+	// Add a timeout to prevent hanging forever
+	done := make(chan struct{})
+	go func() {
+		// Create a mock server that handles model loading
+		server := NewMockLMStudioService(t, newMockLogger())
+		defer server.Close()
+
+		// Extract the host and port from the server URL
+		serverURL, err := url.Parse(server.URL)
+		if err != nil {
+			t.Fatalf("Failed to parse server URL: %v", err)
+		}
+
+		// Create a client that connects to our mock server
+		logger := newMockLogger()
+		client := NewLMStudioClient(strings.TrimPrefix(serverURL.Host, "http://"), logger)
+		defer client.Close()
+
+		// Track progress callbacks
+		var progressCallbacks []float64
+		var modelInfoCallbacks []*Model
+		var callbackMutex sync.Mutex
+
+		progressCallback := func(progress float64, modelInfo *Model) {
+			callbackMutex.Lock()
+			defer callbackMutex.Unlock()
+			progressCallbacks = append(progressCallbacks, progress)
+			modelInfoCallbacks = append(modelInfoCallbacks, modelInfo)
+			logger.Debug("Progress callback: %.2f%%, model: %v", progress*100, modelInfo != nil)
+		}
+
+		// Call the method we're testing
+		err = client.LoadModelWithProgress("mock-model-0.5B", progressCallback)
+		if err != nil {
+			t.Fatalf("LoadModelWithProgress failed: %v", err)
+		}
+
+		// Verify that progress callbacks were called
+		callbackMutex.Lock()
+		if len(progressCallbacks) == 0 {
+			t.Errorf("Expected progress callbacks, got none")
+		}
+
+		// Verify progress values are reasonable (between 0 and 1)
+		for i, progress := range progressCallbacks {
+			if progress < 0 || progress > 1 {
+				t.Errorf("Progress callback %d has invalid value: %f (should be between 0 and 1)", i, progress)
+			}
+		}
+
+		// Verify we got at least one progress update
+		if len(progressCallbacks) < 1 {
+			t.Errorf("Expected at least 1 progress callback, got %d", len(progressCallbacks))
+		}
+
+		// Verify model info was provided when available
+		hasModelInfo := false
+		for _, modelInfo := range modelInfoCallbacks {
+			if modelInfo != nil {
+				hasModelInfo = true
+				if modelInfo.ModelKey == "" {
+					t.Errorf("Expected model info to have ModelKey")
+				}
+				break
+			}
+		}
+		if !hasModelInfo {
+			t.Errorf("Expected at least one callback with model info")
+		}
+		callbackMutex.Unlock()
+
+		close(done)
+	}()
+
+	// Wait for test completion or timeout
+	select {
+	case <-done:
+		// Test completed successfully
+	case <-time.After(10 * time.Second):
+		t.Fatal("TestLoadModelWithProgress: test timed out (possible deadlock or missing mock response)")
+	}
+}
+
+// TestLoadModelWithProgressAlreadyLoaded tests LoadModelWithProgress when model is already loaded
+func TestLoadModelWithProgressAlreadyLoaded(t *testing.T) {
+	fmt.Println("[TEST] TestLoadModelWithProgressAlreadyLoaded started")
+	defer fmt.Println("[TEST] TestLoadModelWithProgressAlreadyLoaded finished or failed")
+
+	// Create a mock server
+	server := NewMockLMStudioService(t, newMockLogger())
+	defer server.Close()
+
+	// Extract the host and port from the server URL
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("Failed to parse server URL: %v", err)
+	}
+
+	// Create a client that connects to our mock server
+	logger := newMockLogger()
+	client := NewLMStudioClient(strings.TrimPrefix(serverURL.Host, "http://"), logger)
+	defer client.Close()
+
+	// Track progress callbacks
+	var progressCallbacks []float64
+	var modelInfoCallbacks []*Model
+	var callbackMutex sync.Mutex
+
+	progressCallback := func(progress float64, modelInfo *Model) {
+		callbackMutex.Lock()
+		defer callbackMutex.Unlock()
+		progressCallbacks = append(progressCallbacks, progress)
+		modelInfoCallbacks = append(modelInfoCallbacks, modelInfo)
+		logger.Debug("Progress callback for already loaded: %.2f%%, model: %v", progress*100, modelInfo != nil)
+	}
+
+	// Use a model that appears in the loaded models list (mock-model-7B)
+	err = client.LoadModelWithProgress("mock-model-7B", progressCallback)
+	if err != nil {
+		t.Fatalf("LoadModelWithProgress failed for already loaded model: %v", err)
+	}
+
+	// Verify that we got exactly one callback with 100% progress for already loaded model
+	callbackMutex.Lock()
+	if len(progressCallbacks) != 1 {
+		t.Errorf("Expected exactly 1 progress callback for already loaded model, got %d", len(progressCallbacks))
+	}
+
+	if len(progressCallbacks) > 0 && progressCallbacks[0] != 1.0 {
+		t.Errorf("Expected progress to be 1.0 for already loaded model, got %f", progressCallbacks[0])
+	}
+	callbackMutex.Unlock()
+}
+
+// TestLoadModelWithProgressNilCallback tests LoadModelWithProgress with nil callback
+func TestLoadModelWithProgressNilCallback(t *testing.T) {
+	fmt.Println("[TEST] TestLoadModelWithProgressNilCallback started")
+	defer fmt.Println("[TEST] TestLoadModelWithProgressNilCallback finished or failed")
+
+	// Create a mock server
+	server := NewMockLMStudioService(t, newMockLogger())
+	defer server.Close()
+
+	// Extract the host and port from the server URL
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("Failed to parse server URL: %v", err)
+	}
+
+	// Create a client that connects to our mock server
+	logger := newMockLogger()
+	client := NewLMStudioClient(strings.TrimPrefix(serverURL.Host, "http://"), logger)
+	defer client.Close()
+
+	// Call the method with nil callback (should not crash)
+	err = client.LoadModelWithProgress("mock-model-0.5B", nil)
+	if err != nil {
+		t.Fatalf("LoadModelWithProgress with nil callback failed: %v", err)
+	}
+}
