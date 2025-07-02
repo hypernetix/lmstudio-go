@@ -288,6 +288,60 @@ func (c *LMStudioClient) LoadModel(modelIdentifier string) error {
 	return c.waitForModelLoading(channel, modelIdentifier, loadTimeout)
 }
 
+// LoadModelWithProgress loads a specified model in LM Studio with progress reporting
+func (c *LMStudioClient) LoadModelWithProgress(modelIdentifier string, progressCallback func(progress float64, modelInfo *Model)) error {
+	// Get model information from downloaded models
+	var modelInfo *Model
+	downloadedModels, err := c.ListDownloadedModels()
+	if err != nil {
+		c.logger.Warn("Failed to get model information: %v", err)
+	} else {
+		for _, model := range downloadedModels {
+			if model.ModelKey == modelIdentifier || model.DisplayName == modelIdentifier || model.ModelName == modelIdentifier {
+				modelInfo = &model
+				break
+			}
+		}
+	}
+
+	// Check if the model exists in downloaded models
+	if err := c.checkModelExists(modelIdentifier); err != nil {
+		return err
+	}
+
+	// Check if the model is already loaded
+	if c.isModelAlreadyLoaded(modelIdentifier) {
+		// Call progress callback with 100% completion for already loaded model
+		if progressCallback != nil {
+			progressCallback(1.0, modelInfo)
+		}
+		return nil
+	}
+
+	// Create a model loading channel with progress callback
+	c.logger.Debug("Creating model loading channel for: %s", modelIdentifier)
+	channel, err := c.NewModelLoadingChannel(LLMNamespace, func(progress float64) {
+		c.logger.Debug("Loading model %s: %.1f%% complete", modelIdentifier, progress*100)
+		if progressCallback != nil {
+			progressCallback(progress, modelInfo)
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create model loading channel: %w", err)
+	}
+	defer channel.Close()
+
+	// Create the channel and start loading the model
+	err = channel.CreateChannel(modelIdentifier)
+	if err != nil {
+		return fmt.Errorf("failed to start model loading: %w", err)
+	}
+
+	// Use a longer timeout for model loading - some large models can take several minutes
+	loadTimeout := 120 * time.Second
+	return c.waitForModelLoading(channel, modelIdentifier, loadTimeout)
+}
+
 // UnloadModel unloads a specified model in LM Studio
 func (c *LMStudioClient) UnloadModel(modelIdentifier string) error {
 	// Get or create a connection to the LLM namespace
