@@ -177,6 +177,89 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
+// loadModelWithProgress loads a model and displays a progress bar with model information
+func loadModelWithProgress(client *lmstudio.LMStudioClient, modelIdentifier string, logger lmstudio.Logger) error {
+	var modelInfo *lmstudio.Model
+	var modelDisplayed bool
+	var lastProgress float64 = -1
+
+	// Use the client's LoadModelWithProgress method
+	err := client.LoadModelWithProgress(modelIdentifier, func(progress float64, info *lmstudio.Model) {
+		// Display model info on first callback
+		if !modelDisplayed {
+			modelInfo = info
+			if modelInfo != nil {
+				fmt.Printf("Loading model \"%s\" (size: %s, format: %s) ...\n", modelInfo.ModelKey, formatSize(modelInfo.Size), modelInfo.Format)
+				if modelInfo.Size > 0 {
+					// Extract format from model info for display
+					format := modelInfo.Format
+					if format == "" && modelInfo.Path != "" {
+						if strings.Contains(modelInfo.Path, "MLX") {
+							format = "MLX"
+						} else if strings.Contains(modelInfo.Path, "GGUF") {
+							format = "GGUF"
+						}
+					}
+
+					// Display size and format like in the screenshot
+					sizeStr := formatSize(modelInfo.Size)
+					if format != "" {
+						fmt.Printf("Model: %s (%s)\n", sizeStr, format)
+					} else {
+						fmt.Printf("Model: %s\n", sizeStr)
+					}
+				}
+			} else {
+				fmt.Printf("Loading model \"%s\" ...\n", modelIdentifier)
+			}
+			modelDisplayed = true
+		}
+
+		// Only update progress if it increased significantly to avoid flickering
+		if progress > lastProgress+0.001 || progress >= 1.0 {
+			displayProgressBar(progress)
+			lastProgress = progress
+		}
+
+		// If model was already loaded, show completion immediately
+		if progress >= 1.0 {
+			fmt.Printf("\n✓ Model loaded successfully\n")
+		}
+	})
+
+	if err != nil {
+		fmt.Printf("\nFailed to load model: %v\n", err)
+		return err
+	}
+
+	return nil
+}
+
+// displayProgressBar shows a progress bar similar to the screenshot
+func displayProgressBar(progress float64) {
+	const barWidth = 50
+	percentage := progress * 100
+
+	// Calculate number of filled characters
+	filled := int(progress * float64(barWidth))
+
+	// Build the progress bar using block characters like in the screenshot
+	bar := make([]rune, barWidth)
+	for i := 0; i < barWidth; i++ {
+		if i < filled {
+			bar[i] = '█' // Full block
+		} else {
+			bar[i] = '░' // Light shade
+		}
+	}
+
+	// Print progress bar with percentage (carriage return to overwrite)
+	fmt.Printf("\r: [%s] %.2f%%", string(bar), percentage)
+
+	// Force output to be displayed immediately
+	os.Stdout.Sync()
+}
+
 func main() {
 	// Setup code coverage if running instrumented build
 	if coverageFile != "" {
@@ -354,12 +437,10 @@ func main() {
 	// Load a model
 	if *loadModel != "" {
 		operation = true
-		fmt.Printf("Loading model: %s\n", *loadModel)
-		if err := client.LoadModel(*loadModel); err != nil {
+		if err := loadModelWithProgress(client, *loadModel, logger); err != nil {
 			logger.Error("Failed to load model: %v", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Model %s loaded successfully\n", *loadModel)
 	}
 
 	// Unload a model
