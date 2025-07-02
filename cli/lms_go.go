@@ -268,7 +268,9 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 	case err := <-done:
 		// Loading completed (successfully or with error)
 		if err != nil {
-			if strings.Contains(err.Error(), "cancelled") {
+			if strings.Contains(err.Error(), "timed out") {
+				quietPrintf("\n⏰ Model loading timed out\n")
+			} else if strings.Contains(err.Error(), "cancelled") {
 				quietPrintf("\n⚠ Model loading cancelled\n")
 			} else {
 				quietPrintf("\nFailed to load model: %v\n", err)

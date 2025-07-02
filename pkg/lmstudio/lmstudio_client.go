@@ -374,12 +374,20 @@ func (c *LMStudioClient) waitForModelLoadingWithContext(ctx context.Context, cha
 	result, err := channel.WaitForResultWithContext(timeoutCtx, loadTimeout)
 
 	if err != nil {
-		// Check if this was a cancellation vs other error
+		// Check if this was a timeout vs other cancellation
+		if timeoutCtx.Err() == context.DeadlineExceeded {
+			c.logger.Error("Model loading timed out after %v for %s", loadTimeout, modelIdentifier)
+			return fmt.Errorf("model loading timed out after %v", loadTimeout)
+		}
+
+		// Check if this was a cancellation from parent context
 		if ctx.Err() != nil {
 			c.logger.Debug("Model loading cancelled for %s: %v", modelIdentifier, ctx.Err())
 			return fmt.Errorf("model loading cancelled: %w", ctx.Err())
 		}
-		c.logger.Error("Model loading failed: %v", err)
+
+		// Other error
+		c.logger.Error("Model loading failed for %s: %v", modelIdentifier, err)
 		return fmt.Errorf("model loading failed: %w", err)
 	}
 

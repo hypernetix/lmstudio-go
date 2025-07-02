@@ -359,22 +359,31 @@ func (ch *ModelLoadingChannel) sendCancellationWithCleanup() {
 	ch.conn.logger.Debug("Attempting to cancel model loading for channel %d (model: %s)", ch.channelID, ch.modelKey)
 
 	// First, try to unload the model that's being loaded to force-stop the loading process
-	// This is more aggressive than just closing the channel
+	// This is more aggressive than just closing the channel and ensures proper cancellation
+	unloadCallID := ch.channelID + 10000 // Use a unique call ID
 	unloadMsg := map[string]interface{}{
 		"type":     "rpcCall",
-		"callId":   ch.channelID + 10000, // Use a unique call ID
+		"callId":   unloadCallID,
 		"endpoint": "unloadModel",
 		"parameter": map[string]interface{}{
 			"identifier": ch.modelKey,
 		},
 	}
 
-	ch.conn.logger.Debug("Sending unload request to force-stop loading for model: %s", ch.modelKey)
+	ch.conn.logger.Debug("Sending unload request to force-stop loading for model: %s (call ID: %d)", ch.modelKey, unloadCallID)
+
+	// Track this call ID so we don't log errors for the response
+	ch.conn.mu.Lock()
+	if ch.conn.pendingUnloadCalls == nil {
+		ch.conn.pendingUnloadCalls = make(map[int]bool)
+	}
+	ch.conn.pendingUnloadCalls[unloadCallID] = true
+	ch.conn.mu.Unlock()
 
 	// Send the unload request (best effort, don't wait for response)
 	err := ch.conn.conn.WriteJSON(unloadMsg)
 	if err != nil {
-		ch.conn.logger.Error("Failed to send unload request for model %s: %v", ch.modelKey, err)
+		ch.conn.logger.Debug("Failed to send unload request for model %s: %v", ch.modelKey, err)
 	} else {
 		ch.conn.logger.Debug("Sent unload request for model %s", ch.modelKey)
 	}
@@ -393,7 +402,7 @@ func (ch *ModelLoadingChannel) sendCancellationWithCleanup() {
 	// Send the close message
 	err = ch.conn.conn.WriteJSON(closeMsg)
 	if err != nil {
-		ch.conn.logger.Error("Failed to send channel close message for channel %d: %v", ch.channelID, err)
+		ch.conn.logger.Debug("Failed to send channel close message for channel %d: %v", ch.channelID, err)
 	} else {
 		ch.conn.logger.Debug("Sent channel close message for channel %d", ch.channelID)
 	}

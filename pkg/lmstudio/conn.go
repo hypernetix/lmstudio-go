@@ -23,14 +23,15 @@ type ChannelHandler interface {
 
 // namespaceConnection represents a connection to a specific LM Studio namespace
 type namespaceConnection struct {
-	logger         Logger
-	namespace      string
-	conn           *websocket.Conn
-	nextID         int
-	pendingCalls   map[int]chan json.RawMessage
-	activeChannels map[int]ChannelHandler // Interface for different channel types
-	connected      bool
-	mu             sync.Mutex
+	logger             Logger
+	namespace          string
+	conn               *websocket.Conn
+	nextID             int
+	pendingCalls       map[int]chan json.RawMessage
+	pendingUnloadCalls map[int]bool           // Track unload calls to avoid logging errors for their responses
+	activeChannels     map[int]ChannelHandler // Interface for different channel types
+	connected          bool
+	mu                 sync.Mutex
 }
 
 // connect establishes a connection to a specific LM Studio namespace
@@ -242,10 +243,22 @@ func (nc *namespaceConnection) handleMessages(ctx context.Context) {
 			if msgType == "rpcResult" || msgType == "rpcError" {
 				if callID, ok := msg["callId"].(float64); ok {
 					nc.mu.Lock()
-					if ch, exists := nc.pendingCalls[int(callID)]; exists {
+					callIDInt := int(callID)
+
+					// Check if this is a response to an unload call that we should ignore
+					isUnloadCall := nc.pendingUnloadCalls != nil && nc.pendingUnloadCalls[callIDInt]
+					if isUnloadCall {
+						// Clean up the pending unload call tracking
+						delete(nc.pendingUnloadCalls, callIDInt)
+						nc.logger.Debug("Received response for unload call ID %d from %s (ignoring)", callIDInt, nc.namespace)
+						nc.mu.Unlock()
+						continue
+					}
+
+					if ch, exists := nc.pendingCalls[callIDInt]; exists {
 						if msgType == "rpcResult" {
 							ch <- message
-							delete(nc.pendingCalls, int(callID))
+							delete(nc.pendingCalls, callIDInt)
 						} else if msgType == "rpcError" {
 							// Handle error responses
 							if errObj, ok := msg["error"].(map[string]interface{}); ok {
@@ -265,10 +278,10 @@ func (nc *namespaceConnection) handleMessages(ctx context.Context) {
 								}
 							}
 							ch <- message
-							delete(nc.pendingCalls, int(callID))
+							delete(nc.pendingCalls, callIDInt)
 						}
 					} else {
-						nc.logger.Error("Received response for unknown call ID %d from %s", int(callID), nc.namespace)
+						nc.logger.Error("Received response for unknown call ID %d from %s", callIDInt, nc.namespace)
 					}
 					nc.mu.Unlock()
 					continue
