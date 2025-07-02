@@ -5,7 +5,7 @@
 [![GitHub issues](https://img.shields.io/github/issues/Dynaval81/lmstudio-go.svg)](https://github.com/hypernetix/lmstudio-go/issues)
 [![GitHub stars](https://img.shields.io/github/stars/Dynaval81/lmstudio-go.svg)](https://github.com/hypernetix/lmstudio-go/stargazers)
 
-**LM Studio Go** is an open-source Go SDK and CLI for managing and interacting with Large Language Models (LLMs) via [LM Studio](https://lmstudio.ai)'s WebSocket API.  
+**LM Studio Go** is an open-source Go SDK and CLI for managing and interacting with Large Language Models (LLMs) via [LM Studio](https://lmstudio.ai)'s WebSocket API.
 Easily load, manage, and chat with LLMs in your Go applications or from the command line.
 
 > Inspired by [lmstudio-python](https://github.com/lmstudio-ai/lmstudio-python).
@@ -31,11 +31,20 @@ This library provides Go bindings for LM Studio, allowing you to interact with L
   - Listing loaded embedding models
   - Listing all loaded models (LLMs and embeddings)
   - Listing downloaded models
-  - Loading specific models
+  - Loading specific models with progress reporting and cancellation support
   - Unloading specific models
   - Unloading all loaded models
 - Sending prompts to models with streaming responses
 - Configurable logging with multiple log levels
+- **Advanced model loading features:**
+  - Real-time progress reporting with model information (size, format)
+  - Graceful cancellation support (Ctrl+C or context cancellation)
+  - Configurable timeouts for large model loading operations
+  - Progress bars and visual feedback in CLI
+- **CLI enhancements:**
+  - Quiet mode for automation and scripting
+  - Timeout configuration for model operations
+  - Enhanced error handling and user feedback
 
 
 ## Installation
@@ -146,6 +155,8 @@ client := lmstudio.NewLMStudioClient("localhost:1234", &MyLogger{level: lmstudio
 
 The project includes a command-line interface for interacting with LM Studio:
 
+### Basic Commands
+
 ```bash
 # Check if LM Studio service is running
 lms-go --status
@@ -165,8 +176,11 @@ lms-go --list-embeddings
 # List downloaded models
 lms-go --list-downloaded
 
-# Load a model
+# Load a model with progress bar
 lms-go --load="mistral-7b-instruct"
+
+# Load a model with custom timeout (default: 30s)
+lms-go --timeout=60s --load="large-model-70b"
 
 # Unload a model
 lms-go --unload="mistral-7b-instruct"
@@ -180,8 +194,67 @@ lms-go --model="mistral-7b-instruct" --prompt="Tell me a joke" --temp=0.7
 # Enable verbose logging
 lms-go -v
 
+# Enable quiet mode (suppress informational output)
+lms-go --quiet --load="model-name"
+lms-go -q --list
+
 # Wait for Ctrl+C to exit (useful for keeping the program running)
 lms-go --wait
+```
+
+### Advanced Options
+
+```bash
+# Timeout Options
+--timeout=30s              # Set timeout for model loading operations (default: 30s)
+--timeout=2m               # Use minutes
+--timeout=120s             # Use seconds
+
+# Output Control
+-q, --quiet                # Suppress informational messages (JSON output and errors still shown)
+-v                         # Enable verbose logging
+
+# Model Loading Features
+# - Real-time progress bar with percentage and visual indicators
+# - Model size and format information display
+# - Graceful cancellation with Ctrl+C
+# - Timeout handling with clear error messages
+```
+
+### Model Loading with Progress
+
+When loading models, the CLI displays a detailed progress bar:
+
+```
+Loading model "mistral-7b-instruct" (size: 4.1 GB, format: safetensors) ...
+Model: 4.1 GB (safetensors)
+: [████████████████████████████████████████████████] 100.00%
+✓ Model loaded successfully
+```
+
+**Features:**
+- Real-time progress updates with percentage
+- Visual progress bar using block characters
+- Model size and format information
+- **Cancellation support**: Press `Ctrl+C` to gracefully cancel loading
+- **Timeout handling**: Use `--timeout` to set custom timeouts for large models
+
+### Quiet Mode
+
+Use quiet mode (`-q` or `--quiet`) for automation and scripting:
+
+```bash
+# Regular output with progress and messages
+lms-go --load="model-name"
+
+# Quiet mode - only essential output
+lms-go --quiet --load="model-name"
+
+# In quiet mode, you still get:
+# - JSON output for --list commands
+# - Error messages
+# - Actual prompt responses
+# But informational messages and progress bars are suppressed
 ```
 
 
@@ -213,8 +286,27 @@ models, err := client.ListAllLoadedModels()
 // List downloaded models
 models, err := client.ListDownloadedModels()
 
-// Load a model
+// Load a model (basic)
 err := client.LoadModel("mistral-7b-instruct")
+
+// Load a model with progress reporting and timeout
+err := client.LoadModelWithProgress(30*time.Second, "mistral-7b-instruct", func(progress float64, modelInfo *lmstudio.Model) {
+    if modelInfo != nil {
+        fmt.Printf("Loading %s (%.1f GB)...\n", modelInfo.ModelName, float64(modelInfo.SizeBytes)/(1024*1024*1024))
+    }
+    fmt.Printf("Progress: %.1f%%\n", progress*100)
+})
+
+// Load a model with progress reporting and cancellation support
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+
+err := client.LoadModelWithProgressContext(ctx, 30*time.Second, "mistral-7b-instruct", func(progress float64, modelInfo *lmstudio.Model) {
+    // Handle progress updates
+    fmt.Printf("Progress: %.1f%%\n", progress*100)
+})
+
+// Cancel loading by calling cancel() or using Ctrl+C signal handling
 
 // Unload a model
 err := client.UnloadModel("mistral-7b-instruct")
