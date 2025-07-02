@@ -173,11 +173,14 @@ func (ch *ModelLoadingChannel) processMessage(message []byte) {
 				// Model resolution event - log but don't take any action
 				ch.conn.logger.Trace("Channel %d: model resolved", ch.channelID)
 			case "success":
-				// Model loaded successfully
-				ch.conn.logger.Trace("Channel %d: success message received", ch.channelID)
+				// Model loading completed successfully
 				if info, ok := messageContent["info"].(map[string]interface{}); ok {
 					if identifier, ok := info["identifier"].(string); ok {
 						ch.conn.logger.Debug("Channel %d: model loaded with identifier %s", ch.channelID, identifier)
+
+						// Ensure progress reaches 100% when model loading completes
+						ch.forceUpdateProgress(1.0)
+
 						ch.mu.Lock()
 						ch.isFinished = true
 						ch.mu.Unlock()
@@ -207,6 +210,9 @@ func (ch *ModelLoadingChannel) processMessage(message []byte) {
 		ch.conn.logger.Debug("Channel %d success message received", ch.channelID)
 		if content, ok := msg["content"].(map[string]interface{}); ok {
 			if identifier, ok := content["identifier"].(string); ok {
+				// Ensure progress reaches 100% when model loading completes
+				ch.forceUpdateProgress(1.0)
+
 				ch.mu.Lock()
 				ch.isFinished = true
 				ch.mu.Unlock()
@@ -266,6 +272,19 @@ func (ch *ModelLoadingChannel) updateProgress(progress float64) {
 	ch.lastProgress = progress
 
 	// Call progress function if provided
+	if ch.progressFn != nil {
+		ch.progressFn(progress)
+	}
+}
+
+// forceUpdateProgress updates progress and always calls the callback, used for completion
+func (ch *ModelLoadingChannel) forceUpdateProgress(progress float64) {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+
+	ch.lastProgress = progress
+
+	// Always call progress function if provided, regardless of previous progress
 	if ch.progressFn != nil {
 		ch.progressFn(progress)
 	}
