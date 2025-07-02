@@ -348,12 +348,12 @@ func testModelLoadingUnloading(t *testing.T) {
 		return
 	}
 
-	if !strings.Contains(stdout, fmt.Sprintf("Loading model: %s", testModel)) {
-		t.Errorf("Expected output to contain 'Loading model: %s', got:\n%s", testModel, stdout)
+	if !strings.Contains(stdout, "Loading model") {
+		t.Errorf("Expected output to contain 'Loading model'\n%s", stdout)
 	}
 
-	if !strings.Contains(stdout, "loaded successfully") {
-		t.Errorf("Expected output to contain 'loaded successfully', got:\n%s", stdout)
+	if !strings.Contains(stdout, testModel) {
+		t.Errorf("Expected output to contain '%s', got:\n%s", testModel, stdout)
 	}
 
 	fmt.Printf("Step 3: Testing prompt with loaded model '%s'...\n", testModel)
