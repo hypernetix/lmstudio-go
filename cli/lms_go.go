@@ -222,10 +222,9 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 			if !modelDisplayed {
 				modelInfo = info
 				if modelInfo != nil {
-					quietPrintf("Loading model \"%s\" (size: %s, format: %s) ...\n", modelInfo.ModelKey, formatSize(modelInfo.Size), modelInfo.Format)
+					format := modelInfo.Format
 					if modelInfo.Size > 0 {
 						// Extract format from model info for display
-						format := modelInfo.Format
 						if format == "" && modelInfo.Path != "" {
 							if strings.Contains(modelInfo.Path, "MLX") {
 								format = "MLX"
@@ -233,15 +232,8 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 								format = "GGUF"
 							}
 						}
-
-						// Display size and format like in the screenshot
-						sizeStr := formatSize(modelInfo.Size)
-						if format != "" {
-							quietPrintf("Model: %s (%s)\n", sizeStr, format)
-						} else {
-							quietPrintf("Model: %s\n", sizeStr)
-						}
 					}
+					quietPrintf("Loading model \"%s\" (size: %s, format: %s) ...\n", modelInfo.ModelKey, formatSize(modelInfo.Size), format)
 				} else {
 					quietPrintf("Loading model \"%s\" ...\n", modelIdentifier)
 				}
