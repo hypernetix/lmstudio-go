@@ -418,6 +418,7 @@ func (c *LMStudioClient) UnloadModel(modelIdentifier string) error {
 	// Make the RPC call to unload the model
 	_, err = conn.RemoteCall(ModelUnloadEndpoint, params)
 	if err != nil {
+		c.logger.Error("Failed to unload model: %s, err: %v", modelIdentifier, err)
 		return err
 	}
 
