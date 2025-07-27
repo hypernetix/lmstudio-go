@@ -230,23 +230,19 @@ func (ch *ModelLoadingChannel) processMessage(message []byte) {
 		// Handle error
 		ch.conn.logger.Error("Channel %d received error", ch.channelID)
 		var errorMsg string
-		if content, ok := msg["content"].(map[string]interface{}); ok {
-			if err, ok := content["error"].(map[string]interface{}); ok {
-				if title, ok := err["title"].(string); ok {
-					errorMsg = title
-				} else if rootTitle, ok := err["rootTitle"].(string); ok {
-					errorMsg = rootTitle
-				} else {
-					errorMsg = "Unknown channel error"
-				}
+		if err, ok := msg["error"].(map[string]interface{}); ok {
+			if title, ok := err["title"].(string); ok {
+				errorMsg = title
+			} else if rootTitle, ok := err["rootTitle"].(string); ok {
+				errorMsg = rootTitle
 			} else {
-				errorMsg = "Channel error with missing error details"
+				errorMsg = "Unknown channel error"
 			}
 		} else {
-			errorMsg = "Channel error with missing content"
+			errorMsg = "Channel error with missing error details"
 		}
 		ch.conn.logger.Error("Channel %d error: %s", ch.channelID, errorMsg)
-		ch.errorCh <- fmt.Errorf("model loading error: %s", errorMsg)
+		ch.errorCh <- fmt.Errorf("%s", errorMsg)
 	case "channelClose":
 		// Channel has been closed
 		ch.conn.logger.Trace("Channel %d closed", ch.channelID)
