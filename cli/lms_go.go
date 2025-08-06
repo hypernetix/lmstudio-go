@@ -206,6 +206,7 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 	// Set up signal handling for Ctrl+C cancellation
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan) // Clean up signal handler
 
 	// Channel to communicate completion or error
 	done := make(chan error, 1)
@@ -283,21 +284,25 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 		quietPrintf("\n⚠ Model loading cancelled by user\n")
 
 		// Cancel the context to stop the loading operation
+		logger.Debug("Cancelling context to stop loading operation...")
 		cancel()
 
-		// Wait a short time for graceful cancellation
+		// Wait a longer time for graceful cancellation (5 seconds instead of 2)
+		logger.Debug("Waiting up to 5 seconds for graceful cancellation...")
 		select {
-		case <-done:
+		case err := <-done:
 			// Loading operation acknowledged the cancellation
+			logger.Debug("Loading operation gracefully cancelled with result: %v", err)
 		case <-func() <-chan struct{} {
-			timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), time.Second*2)
+			timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), time.Second*5)
 			defer timeoutCancel()
 			return timeoutCtx.Done()
 		}():
 			// Timeout waiting for graceful cancellation
-			logger.Debug("Timeout waiting for loading cancellation")
+			logger.Debug("Timeout waiting for loading cancellation after 5 seconds")
 		}
 
+		logger.Debug("Cancellation process completed, returning error")
 		return fmt.Errorf("model loading cancelled by user")
 	}
 }
