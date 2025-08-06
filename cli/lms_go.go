@@ -249,7 +249,7 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 
 			// If model was already loaded, show completion immediately
 			if progress >= 1.0 {
-				quietPrintf("\n✓ Model loaded successfully\n")
+				quietPrintf("\n[SUCCESS] Model loaded successfully\n")
 			}
 		})
 
@@ -262,9 +262,9 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 		// Loading completed (successfully or with error)
 		if err != nil {
 			if strings.Contains(err.Error(), "timed out") {
-				quietPrintf("\n⏰ Model loading timed out\n")
+				quietPrintf("\n[TIMEOUT] Model loading timed out\n")
 			} else if strings.Contains(err.Error(), "cancelled") {
-				quietPrintf("\n⚠ Model loading cancelled\n")
+				quietPrintf("\n[WARNING] Model loading cancelled\n")
 			} else {
 				quietPrintf("\nFailed to load model: %v\n", err)
 			}
@@ -281,7 +281,7 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 			fmt.Printf("\r%s\r", strings.Repeat(" ", 80)) // Clear the line
 		}
 
-		quietPrintf("\n⚠ Model loading cancelled by user\n")
+		quietPrintf("\n[WARNING] Model loading cancelled by user\n")
 
 		// Cancel the context to stop the loading operation
 		logger.Debug("Cancelling context to stop loading operation...")
