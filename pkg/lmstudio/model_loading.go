@@ -70,7 +70,7 @@ func (ch *ModelLoadingChannel) CreateChannel(modelKey string) error {
 	ch.conn.mu.Unlock()
 
 	// Send the channel create message
-	err := ch.conn.conn.WriteJSON(createMsg)
+	err := ch.conn.writeJSON(createMsg)
 	if err != nil {
 		// Clean up on error
 		ch.conn.mu.Lock()
@@ -373,7 +373,19 @@ func (ch *ModelLoadingChannel) sendCancellationWithCleanup() {
 
 	ch.conn.logger.Debug("Attempting to cancel model loading for channel %d (model: %s)", ch.channelID, ch.modelKey)
 
-	// First, try to unload the model that's being loaded to force-stop the loading process
+	// Check if connection is still available before sending messages
+	ch.conn.mu.Lock()
+	isConnected := ch.conn.connected
+	ch.conn.mu.Unlock()
+
+	if !isConnected {
+		ch.conn.logger.Debug("Connection already closed, cannot send cancellation messages for channel %d", ch.channelID)
+		// Still clean up the channel from active channels
+		ch.cleanupChannel()
+		return
+	}
+
+	// Method 1: Try to unload the model that's being loaded to force-stop the loading process
 	// This is more aggressive than just closing the channel and ensures proper cancellation
 	unloadCallID := ch.channelID + 10000 // Use a unique call ID
 	unloadMsg := map[string]interface{}{
@@ -396,17 +408,39 @@ func (ch *ModelLoadingChannel) sendCancellationWithCleanup() {
 	ch.conn.mu.Unlock()
 
 	// Send the unload request (best effort, don't wait for response)
-	err := ch.conn.conn.WriteJSON(unloadMsg)
+	err := ch.conn.writeJSON(unloadMsg)
 	if err != nil {
 		ch.conn.logger.Debug("Failed to send unload request for model %s: %v", ch.modelKey, err)
+		// If we can't send the unload request, skip the other messages too
+		ch.cleanupChannel()
+		return
 	} else {
 		ch.conn.logger.Debug("Sent unload request for model %s", ch.modelKey)
 	}
 
 	// Small delay to allow the unload request to be processed
+	ch.conn.logger.Debug("Waiting 100ms for unload request to be processed...")
 	time.Sleep(100 * time.Millisecond)
 
-	// Now send channel close message to cleanup the channel
+	// Method 2: Send channel abort message as a fallback
+	abortMsg := map[string]interface{}{
+		"type":      "channelAbort",
+		"channelId": ch.channelID,
+		"reason":    "user_cancelled",
+	}
+
+	ch.conn.logger.Debug("Sending channel abort for channel %d as fallback", ch.channelID)
+	err = ch.conn.writeJSON(abortMsg)
+	if err != nil {
+		ch.conn.logger.Debug("Failed to send channel abort message for channel %d: %v", ch.channelID, err)
+	} else {
+		ch.conn.logger.Debug("Sent channel abort message for channel %d", ch.channelID)
+	}
+
+	// Brief delay between messages
+	time.Sleep(50 * time.Millisecond)
+
+	// Method 3: Send standard channel close message to cleanup the channel
 	closeMsg := map[string]interface{}{
 		"type":      "channelClose",
 		"channelId": ch.channelID,
@@ -415,13 +449,23 @@ func (ch *ModelLoadingChannel) sendCancellationWithCleanup() {
 	ch.conn.logger.Debug("Sending channel close for channel %d", ch.channelID)
 
 	// Send the close message
-	err = ch.conn.conn.WriteJSON(closeMsg)
+	err = ch.conn.writeJSON(closeMsg)
 	if err != nil {
 		ch.conn.logger.Debug("Failed to send channel close message for channel %d: %v", ch.channelID, err)
 	} else {
 		ch.conn.logger.Debug("Sent channel close message for channel %d", ch.channelID)
 	}
 
+	// Additional delay to ensure cancellation messages are sent before cleanup
+	ch.conn.logger.Debug("Waiting additional 200ms for cancellation messages to be processed...")
+	time.Sleep(200 * time.Millisecond)
+
+	// Clean up the channel
+	ch.cleanupChannel()
+}
+
+// cleanupChannel handles the cleanup of the channel without sending messages
+func (ch *ModelLoadingChannel) cleanupChannel() {
 	// Clean up the channel from active channels
 	ch.conn.mu.Lock()
 	delete(ch.conn.activeChannels, ch.channelID)
@@ -451,7 +495,7 @@ func (ch *ModelLoadingChannel) Close() error {
 		"channelId": ch.channelID,
 	}
 
-	err := ch.conn.conn.WriteJSON(closeMsg)
+	err := ch.conn.writeJSON(closeMsg)
 	if err != nil {
 		return fmt.Errorf("failed to close model loading channel: %w", err)
 	}

@@ -206,6 +206,7 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 	// Set up signal handling for Ctrl+C cancellation
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan) // Clean up signal handler
 
 	// Channel to communicate completion or error
 	done := make(chan error, 1)
@@ -248,7 +249,7 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 
 			// If model was already loaded, show completion immediately
 			if progress >= 1.0 {
-				quietPrintf("\n✓ Model loaded successfully\n")
+				quietPrintf("\n[SUCCESS] Model loaded successfully\n")
 			}
 		})
 
@@ -261,9 +262,9 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 		// Loading completed (successfully or with error)
 		if err != nil {
 			if strings.Contains(err.Error(), "timed out") {
-				quietPrintf("\n⏰ Model loading timed out\n")
+				quietPrintf("\n[TIMEOUT] Model loading timed out\n")
 			} else if strings.Contains(err.Error(), "cancelled") {
-				quietPrintf("\n⚠ Model loading cancelled\n")
+				quietPrintf("\n[WARNING] Model loading cancelled\n")
 			} else {
 				quietPrintf("\nFailed to load model: %v\n", err)
 			}
@@ -280,24 +281,28 @@ func loadModelWithProgress(client *lmstudio.LMStudioClient, loadTimeout time.Dur
 			fmt.Printf("\r%s\r", strings.Repeat(" ", 80)) // Clear the line
 		}
 
-		quietPrintf("\n⚠ Model loading cancelled by user\n")
+		quietPrintf("\n[WARNING] Model loading cancelled by user\n")
 
 		// Cancel the context to stop the loading operation
+		logger.Debug("Cancelling context to stop loading operation...")
 		cancel()
 
-		// Wait a short time for graceful cancellation
+		// Wait a longer time for graceful cancellation (5 seconds instead of 2)
+		logger.Debug("Waiting up to 5 seconds for graceful cancellation...")
 		select {
-		case <-done:
+		case err := <-done:
 			// Loading operation acknowledged the cancellation
+			logger.Debug("Loading operation gracefully cancelled with result: %v", err)
 		case <-func() <-chan struct{} {
-			timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), time.Second*2)
+			timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), time.Second*5)
 			defer timeoutCancel()
 			return timeoutCtx.Done()
 		}():
 			// Timeout waiting for graceful cancellation
-			logger.Debug("Timeout waiting for loading cancellation")
+			logger.Debug("Timeout waiting for loading cancellation after 5 seconds")
 		}
 
+		logger.Debug("Cancellation process completed, returning error")
 		return fmt.Errorf("model loading cancelled by user")
 	}
 }

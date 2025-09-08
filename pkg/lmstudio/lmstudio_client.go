@@ -655,7 +655,7 @@ func (c *LMStudioClient) SendPrompt(modelIdentifier string, prompt string, tempe
 
 	// Send the chat message
 	c.logger.Debug("Sending prompt to model %s using predict endpoint (instance: %s, temp: %.2f)", modelIdentifier, instanceReference, temperature)
-	if err := conn.conn.WriteJSON(chatMsg); err != nil {
+	if err := conn.writeJSON(chatMsg); err != nil {
 		// Clean up
 		conn.mu.Lock()
 		delete(conn.activeChannels, chatChannelID)

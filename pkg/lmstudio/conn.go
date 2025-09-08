@@ -21,6 +21,26 @@ type ChannelHandler interface {
 	processMessage(message []byte)
 }
 
+// writeJSON serializes writes to the websocket connection for JSON messages
+func (nc *namespaceConnection) writeJSON(v interface{}) error {
+	nc.writeMu.Lock()
+	defer nc.writeMu.Unlock()
+	if nc.conn == nil {
+		return fmt.Errorf("connection is nil")
+	}
+	return nc.conn.WriteJSON(v)
+}
+
+// writeMessage serializes writes to the websocket connection for raw messages
+func (nc *namespaceConnection) writeMessage(messageType int, data []byte) error {
+	nc.writeMu.Lock()
+	defer nc.writeMu.Unlock()
+	if nc.conn == nil {
+		return fmt.Errorf("connection is nil")
+	}
+	return nc.conn.WriteMessage(messageType, data)
+}
+
 // namespaceConnection represents a connection to a specific LM Studio namespace
 type namespaceConnection struct {
 	logger             Logger
@@ -32,6 +52,7 @@ type namespaceConnection struct {
 	activeChannels     map[int]ChannelHandler // Interface for different channel types
 	connected          bool
 	mu                 sync.Mutex
+	writeMu            sync.Mutex // serialize all websocket writes
 }
 
 // connect establishes a connection to a specific LM Studio namespace
@@ -101,7 +122,7 @@ func (nc *namespaceConnection) connect(apiHost string, parentCtx context.Context
 	}
 
 	nc.logger.Debug("Sending authentication message to %s: %+v", nc.namespace, authMsg)
-	if err := conn.WriteJSON(authMsg); err != nil {
+	if err := nc.writeJSON(authMsg); err != nil {
 		conn.Close()
 		return fmt.Errorf("failed to send authentication message: %w", err)
 	}
@@ -126,7 +147,7 @@ func (nc *namespaceConnection) connect(apiHost string, parentCtx context.Context
 	if !ok || !success {
 		conn.Close()
 		errorMsg := "unknown error"
-		if errDetails, ok := authResponse["error"]; ok {
+		if errDetails, ok := authResponse["error"].(string); ok {
 			errorMsg = fmt.Sprintf("%v", errDetails)
 		}
 		return fmt.Errorf("authentication failed: %s", errorMsg)
@@ -170,7 +191,7 @@ func (nc *namespaceConnection) close() error {
 	// Send a close message
 	closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
 	// Ignore error if connection is already broken
-	_ = nc.conn.WriteMessage(websocket.CloseMessage, closeMsg)
+	_ = nc.writeMessage(websocket.CloseMessage, closeMsg)
 
 	// Give time for the close message to be sent and processed
 	time.Sleep(250 * time.Millisecond)
@@ -384,7 +405,7 @@ func (nc *namespaceConnection) RemoteCall(endpoint string, params interface{}) (
 	rpcMsgBytes, _ := json.Marshal(rpcMsg)
 	nc.logger.Debug("Sending RPC call to %s: %s", nc.namespace, string(rpcMsgBytes))
 
-	if err := nc.conn.WriteJSON(rpcMsg); err != nil {
+	if err := nc.writeJSON(rpcMsg); err != nil {
 		nc.mu.Lock()
 		delete(nc.pendingCalls, id)
 		nc.mu.Unlock()
