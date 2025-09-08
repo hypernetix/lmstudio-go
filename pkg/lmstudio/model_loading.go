@@ -70,7 +70,7 @@ func (ch *ModelLoadingChannel) CreateChannel(modelKey string) error {
 	ch.conn.mu.Unlock()
 
 	// Send the channel create message
-	err := ch.conn.conn.WriteJSON(createMsg)
+	err := ch.conn.writeJSON(createMsg)
 	if err != nil {
 		// Clean up on error
 		ch.conn.mu.Lock()
@@ -408,7 +408,7 @@ func (ch *ModelLoadingChannel) sendCancellationWithCleanup() {
 	ch.conn.mu.Unlock()
 
 	// Send the unload request (best effort, don't wait for response)
-	err := ch.conn.conn.WriteJSON(unloadMsg)
+	err := ch.conn.writeJSON(unloadMsg)
 	if err != nil {
 		ch.conn.logger.Debug("Failed to send unload request for model %s: %v", ch.modelKey, err)
 		// If we can't send the unload request, skip the other messages too
@@ -430,7 +430,7 @@ func (ch *ModelLoadingChannel) sendCancellationWithCleanup() {
 	}
 
 	ch.conn.logger.Debug("Sending channel abort for channel %d as fallback", ch.channelID)
-	err = ch.conn.conn.WriteJSON(abortMsg)
+	err = ch.conn.writeJSON(abortMsg)
 	if err != nil {
 		ch.conn.logger.Debug("Failed to send channel abort message for channel %d: %v", ch.channelID, err)
 	} else {
@@ -449,7 +449,7 @@ func (ch *ModelLoadingChannel) sendCancellationWithCleanup() {
 	ch.conn.logger.Debug("Sending channel close for channel %d", ch.channelID)
 
 	// Send the close message
-	err = ch.conn.conn.WriteJSON(closeMsg)
+	err = ch.conn.writeJSON(closeMsg)
 	if err != nil {
 		ch.conn.logger.Debug("Failed to send channel close message for channel %d: %v", ch.channelID, err)
 	} else {
@@ -495,7 +495,7 @@ func (ch *ModelLoadingChannel) Close() error {
 		"channelId": ch.channelID,
 	}
 
-	err := ch.conn.conn.WriteJSON(closeMsg)
+	err := ch.conn.writeJSON(closeMsg)
 	if err != nil {
 		return fmt.Errorf("failed to close model loading channel: %w", err)
 	}
